@@ -8,9 +8,6 @@
       "destination": "https://customer-zl11k93xxb6833cs.cloudflarestream.com/$1"
     },
     {
-      "handle": "filesystem"
-    },
-    {
       "source": "/embed",
       "destination": "/embed.html"
     },
