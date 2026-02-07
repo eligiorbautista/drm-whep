@@ -1,7 +1,6 @@
 import { render, screen, cleanup } from '@testing-library/react';
 import { EmbedApp } from './EmbedApp';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import React from 'react';
 
 // Mock Player
 vi.mock('./Player', () => ({

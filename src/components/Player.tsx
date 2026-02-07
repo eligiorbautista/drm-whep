@@ -1,44 +1,179 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useWhep } from '../hooks/useWhep';
-import { useDrm } from '../hooks/useDrm';
+import { rtcDrmConfigure, rtcDrmOnTrack, rtcDrmEnvironments } from '../lib/rtc-drm-transform.min.js';
+import { hexToUint8Array, generateAuthToken } from '../lib/drmUtils';
 
 export interface PlayerProps {
   endpoint: string;
-  merchant: string;
-  token?: string;
+  merchant?: string;
   encrypted?: boolean;
 }
 
-export const Player: React.FC<PlayerProps> = ({ endpoint, merchant, token, encrypted }) => {
+function logDebug(msg: string) {
+  console.log(`[DRM] ${msg}`);
+}
+
+export const Player: React.FC<PlayerProps> = ({ endpoint, merchant, encrypted }) => {
   console.log('Player Props Endpoint:', endpoint);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const { isConnected, isConnecting, error, connect, disconnect } = useWhep();
-  const { setup, handleTrack } = useDrm();
   const [isMuted, setIsMuted] = useState(true);
 
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.muted = isMuted;
     }
+    if (audioRef.current) {
+      audioRef.current.muted = isMuted;
+    }
   }, [isMuted]);
 
-  const handleConnect = async () => {
-    if (encrypted) {
-      setup({ merchant, authToken: token, videoElement: videoRef.current });
-    }
+  const configureDrm = async (pc: RTCPeerConnection) => {
+    const keyId = hexToUint8Array(import.meta.env.VITE_DRM_KEY_ID);
+    const iv = hexToUint8Array(import.meta.env.VITE_DRM_IV);
+
+    // Platform detection (same as whep)
+    const uad = (navigator as any).userAgentData;
+    const platform = uad?.platform || navigator.platform || '';
+    const isMobile = uad?.mobile === true;
+    const uaHasAndroid = /Android/i.test(navigator.userAgent);
+    const isAndroid = platform.toLowerCase() === 'android' ||
+                      uaHasAndroid ||
+                      (isMobile && /linux/i.test(platform));
     
+    const detectedPlatform = isAndroid ? 'Android' : (platform || 'Unknown');
+    logDebug(`Platform detection: platform="${platform}", uad.mobile=${uad?.mobile}, uaHasAndroid=${uaHasAndroid}, isAndroid=${isAndroid}`);
+    logDebug(`Detected platform: ${detectedPlatform}`);
+
+    const params = new URLSearchParams(window.location.search);
+    const robustnessOverride = params.get('robustness')?.toUpperCase();
+
+    let androidRobustness = 'SW';
+    if (isAndroid) {
+      try {
+        await navigator.requestMediaKeySystemAccess('com.widevine.alpha', [{
+          initDataTypes: ['cenc'],
+          videoCapabilities: [{
+            contentType: 'video/mp4; codecs="avc1.42E01E"',
+            robustness: 'HW_SECURE_ALL'
+          }]
+        }]);
+        androidRobustness = 'HW';
+        logDebug('Widevine L1 (HW_SECURE_ALL) is supported on this device');
+      } catch {
+        logDebug('Widevine L1 (HW) NOT supported — falling back to SW');
+        androidRobustness = 'SW';
+      }
+    }
+
+    if (robustnessOverride === 'HW' || robustnessOverride === 'SW') {
+      androidRobustness = robustnessOverride;
+      logDebug(`Robustness overridden via URL param: ${robustnessOverride}`);
+    }
+
+    let mediaBufferMs = -1;
+    if (isAndroid && androidRobustness === 'HW' && mediaBufferMs < 600)
+      mediaBufferMs = 1200;
+
+    const video = {
+      codec: 'H264' as const,
+      encryption: 'cbcs' as const,
+      robustness: (isAndroid ? androidRobustness : 'SW') as 'HW' | 'SW',
+      keyId,
+      iv
+    };
+
+    const crt = {
+      profile: { purchase: {} },
+      assetId: "test-key",
+      outputProtection: {
+        digital: true,
+        analogue: true,
+        enforce: false
+      },
+      storeLicense: true
+    };
+
+    const authToken = await generateAuthToken(
+      merchant || import.meta.env.VITE_DRM_MERCHANT,
+      hexToUint8Array(import.meta.env.VITE_DRM_SECRET),
+      crt
+    );
+
+    const videoElement = videoRef.current!;
+    const audioElement = audioRef.current!;
+
+    const drmConfig = {
+      merchant: merchant || import.meta.env.VITE_DRM_MERCHANT,
+      environment: rtcDrmEnvironments.Staging,
+      videoElement,
+      audioElement,
+      sessionId: `crtjson:${JSON.stringify(crt)}`,
+      authToken,
+      video,
+      audio: { codec: 'opus' as const, encryption: 'clear' as const },
+      logLevel: 3,
+      mediaBufferMs
+    };
+
+    // Event listeners (same as whep)
+    for (const evName of ['loadedmetadata', 'loadeddata', 'canplay', 'playing', 'waiting', 'stalled', 'error', 'emptied', 'suspend']) {
+      videoElement.addEventListener(evName, () => logDebug(`video event: ${evName}`));
+      audioElement.addEventListener(evName, () => logDebug(`audio event: ${evName}`));
+    }
+    videoElement.addEventListener('error', () => {
+      const e = videoElement.error;
+      logDebug(`video MediaError: code=${e?.code}, message=${e?.message}`);
+    });
+
+    videoElement.addEventListener('rtcdrmerror', (event: any) => {
+      logDebug(`DRM ERROR: ${event.detail.message}`);
+      alert(`DRM error: ${event.detail.message}`);
+    });
+
+    logDebug(`DRM config: isAndroid=${isAndroid}, encryption=${video.encryption}, robustness=${video.robustness}, mediaBufferMs=${mediaBufferMs}`);
+    logDebug(`CRT: ${JSON.stringify(crt)}`);
+
+    try {
+      rtcDrmConfigure(drmConfig);
+      logDebug('rtcDrmConfigure succeeded');
+    } catch (err: any) {
+      logDebug(`rtcDrmConfigure FAILED: ${err.message}`);
+      throw err;
+    }
+
+    pc.addEventListener('track', (event) => {
+      logDebug(`Track received: ${event.track.kind}`);
+      try {
+        rtcDrmOnTrack(event, drmConfig);
+        logDebug(`rtcDrmOnTrack succeeded for ${event.track.kind}`);
+        // Don't call play() here — the autoPlay attribute on the <video>/<audio>
+        // elements handles playback start. Calling play() immediately races with
+        // the DRM library's internal MediaSource setup, causing
+        // "interrupted by new load request" errors.
+      } catch (err: any) {
+        logDebug(`rtcDrmOnTrack FAILED: ${err.message}`);
+        alert(`rtcDrmOnTrack failed with: ${err.message}`);
+      }
+    });
+  };
+
+  const handleConnect = async () => {
     await connect({
       endpoint,
-      token,
       encrypted,
-      onTrack: encrypted ? handleTrack : undefined
-    }, videoRef.current);
+      configureDrm: encrypted ? configureDrm : undefined
+    }, videoRef.current, audioRef.current);
   };
 
   const toggleMute = () => {
     if (videoRef.current) {
       videoRef.current.muted = !isMuted;
       setIsMuted(!isMuted);
+    }
+    if (audioRef.current) {
+      audioRef.current.muted = !isMuted;
     }
   };
 
@@ -50,6 +185,14 @@ export const Player: React.FC<PlayerProps> = ({ endpoint, merchant, token, encry
         autoPlay
         playsInline
         muted={isMuted}
+      />
+      {/* Hidden audio element for DRM (required by rtc-drm-transform library) */}
+      <audio
+        ref={audioRef}
+        autoPlay
+        playsInline
+        muted={isMuted}
+        style={{ display: 'none' }}
       />
       
       {error && (
@@ -97,7 +240,7 @@ export const Player: React.FC<PlayerProps> = ({ endpoint, merchant, token, encry
               </button>
             ) : (
               <button
-                onClick={disconnect}
+                onClick={() => disconnect()}
                 className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded font-medium transition-all shadow-lg hover:scale-105 active:scale-95"
               >
                 Disconnect

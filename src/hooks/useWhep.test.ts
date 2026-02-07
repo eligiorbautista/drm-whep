@@ -4,20 +4,20 @@ import { describe, it, expect, vi } from 'vitest';
 
 describe('useWhep', () => {
   it('should initialize with disconnected state', () => {
-    const { result } = renderHook(() => useWhep(null));
+    const { result } = renderHook(() => useWhep());
     expect(result.current.isConnected).toBe(false);
   });
 
   it('should have a connect function', () => {
-    const { result } = renderHook(() => useWhep(null));
+    const { result } = renderHook(() => useWhep());
     expect(typeof result.current.connect).toBe('function');
   });
 
   it('should call fetch and set remote description on connect', async () => {
-    const { result } = renderHook(() => useWhep(null));
+    const { result } = renderHook(() => useWhep());
     
     await act(async () => {
-      await result.current.connect({ endpoint: 'http://test.com' });
+      await result.current.connect({ endpoint: 'http://test.com' }, null);
     });
 
     expect(globalThis.fetch).toHaveBeenCalled();
@@ -27,10 +27,10 @@ describe('useWhep', () => {
     // Mock fetch to fail
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
     
-    const { result } = renderHook(() => useWhep(null));
+    const { result } = renderHook(() => useWhep());
 
     await act(async () => {
-      await result.current.connect({ endpoint: 'http://fail.com' });
+      await result.current.connect({ endpoint: 'http://fail.com' }, null);
     });
 
     // This assertion fails if the bug exists (disconnect clears the error)

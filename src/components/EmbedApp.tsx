@@ -6,10 +6,19 @@ export const EmbedApp = () => {
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
+    
+    // Get endpoint - can be full URL or relative path
+    let endpoint = searchParams.get('endpoint') || '';
+    
+    // If endpoint is a relative path, prepend the domain
+    if (endpoint && !endpoint.startsWith('http')) {
+      const streamDomain = import.meta.env.VITE_CLOUDFLARE_STREAM_DOMAIN;
+      endpoint = streamDomain + endpoint;
+    }
+    
     const parsedParams = {
-      endpoint: searchParams.get('endpoint') || '',
-      merchant: searchParams.get('merchant') || 'sb_live',
-      token: searchParams.get('token') || undefined,
+      endpoint,
+      merchant: searchParams.get('merchant') || import.meta.env.VITE_DRM_MERCHANT,
       encrypted: searchParams.get('encrypted') === 'true'
     };
     console.log('EmbedApp Parsed Params:', parsedParams);
@@ -34,7 +43,6 @@ export const EmbedApp = () => {
       <Player
         endpoint={params.endpoint}
         merchant={params.merchant}
-        token={params.token}
         encrypted={params.encrypted}
       />
     </div>

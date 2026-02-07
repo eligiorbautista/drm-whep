@@ -14,6 +14,12 @@ export default defineConfig(({ mode }) => {
           target: env.VITE_CLOUDFLARE_STREAM_DOMAIN || 'https://customer-zl11k93xxb6833cs.cloudflarestream.com',
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/cf-stream/, ''),
+        },
+        // WHIP publish endpoint for broadcaster
+        '/cf-publish': {
+          target: env.VITE_CLOUDFLARE_STREAM_DOMAIN || 'https://customer-zl11k93xxb6833cs.cloudflarestream.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/cf-publish/, ''),
         }
       }
     },

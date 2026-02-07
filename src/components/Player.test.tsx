@@ -1,7 +1,6 @@
 import { render, screen, cleanup } from '@testing-library/react';
 import { Player } from './Player';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import React from 'react';
 
 // Mock hooks
 vi.mock('../hooks/useWhep', () => ({

@@ -2,9 +2,8 @@ import { useState, useCallback, useRef } from 'react';
 
 export interface WhepOptions {
   endpoint: string;
-  token?: string;
   encrypted?: boolean;
-  onTrack?: (event: RTCTrackEvent) => void;
+  configureDrm?: (pc: RTCPeerConnection) => Promise<void>;
 }
 
 export function useWhep() {
@@ -27,12 +26,24 @@ export function useWhep() {
     }
   }, []);
 
-  const connect = useCallback(async (options: WhepOptions, videoElement: HTMLVideoElement | null) => {
+  const connect = useCallback(async (options: WhepOptions, videoElement: HTMLVideoElement | null, audioElement: HTMLAudioElement | null) => {
     disconnect();
     setError(null);
     setIsConnecting(true);
 
-    const { endpoint, token, encrypted } = options;
+    // Clear previous media state (mirrors whep's unsubscribe cleanup)
+    if (videoElement) {
+      videoElement.pause();
+      videoElement.removeAttribute('src');
+      videoElement.srcObject = null;
+    }
+    if (audioElement) {
+      audioElement.pause();
+      audioElement.removeAttribute('src');
+      audioElement.srcObject = null;
+    }
+
+    const { endpoint, encrypted, configureDrm } = options;
     streamRef.current = new MediaStream();
 
     try {
@@ -47,17 +58,26 @@ export function useWhep() {
       pc.addTransceiver('video', { direction: 'recvonly' });
       pc.addTransceiver('audio', { direction: 'recvonly' });
 
-      pc.ontrack = (event) => {
-        console.log('Track received:', event.track.kind);
-        if (options.onTrack) {
-          options.onTrack(event);
-        } else {
-          streamRef.current?.addTrack(event.track);
-          if (videoElement && !videoElement.srcObject) {
-            videoElement.srcObject = streamRef.current;
+      // Configure DRM or setup direct playback
+      if (encrypted && configureDrm) {
+        await configureDrm(pc);
+      } else {
+        // Direct playback without DRM — mirrors whep's onTrack pattern exactly
+        pc.addEventListener('track', (event) => {
+          console.log('[non-DRM] Track received:', event.track.kind);
+          if (!streamRef.current) {
+            streamRef.current = new MediaStream();
           }
-        }
-      };
+          streamRef.current.addTrack(event.track);
+
+          if (videoElement) {
+            videoElement.srcObject = streamRef.current;
+            videoElement.play().catch((e) =>
+              console.warn('[non-DRM] video.play() rejected:', e.message)
+            );
+          }
+        });
+      }
 
       const handleStateChange = () => {
         const state = pc.connectionState;
@@ -65,8 +85,12 @@ export function useWhep() {
         if (state === 'connected') {
           setIsConnected(true);
           setIsConnecting(false);
-          if (videoElement && !videoElement.srcObject && streamRef.current) {
+          // Backup: ensure srcObject is assigned for non-DRM playback
+          if (!encrypted && videoElement && streamRef.current) {
             videoElement.srcObject = streamRef.current;
+            videoElement.play().catch((e) =>
+              console.warn('[non-DRM] video.play() on connected rejected:', e.message)
+            );
           }
         } else if (['failed', 'closed', 'disconnected'].includes(state)) {
           setIsConnected(false);
@@ -100,9 +124,6 @@ export function useWhep() {
 
       const headers = new Headers();
       headers.append('Content-Type', 'application/sdp');
-      if (token) {
-        headers.append('Authorization', `Bearer ${token}`);
-      }
 
       console.log('WHEP Signaling URL:', endpoint);
 
