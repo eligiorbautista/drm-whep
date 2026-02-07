@@ -17,7 +17,7 @@ describe('useWhep', () => {
     const { result } = renderHook(() => useWhep());
     
     await act(async () => {
-      await result.current.connect({ endpoint: 'http://test.com' }, null);
+      await result.current.connect({ endpoint: 'http://test.com' }, null, null);
     });
 
     expect(globalThis.fetch).toHaveBeenCalled();
@@ -30,7 +30,7 @@ describe('useWhep', () => {
     const { result } = renderHook(() => useWhep());
 
     await act(async () => {
-      await result.current.connect({ endpoint: 'http://fail.com' }, null);
+      await result.current.connect({ endpoint: 'http://fail.com' }, null, null);
     });
 
     // This assertion fails if the bug exists (disconnect clears the error)
